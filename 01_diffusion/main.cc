@@ -39,50 +39,46 @@ public:
         _buffer = nullptr;
     }
 
-    void init( int t_nodes, int x_nodes, float t_step, float x_step)
-    {
-        assert( _buffer == nullptr );
-
-        _t_nodes = t_nodes;
-        _x_nodes = x_nodes;
-        _t_step = t_step;
-        _x_step = x_step;
-
-        _buffer = static_cast< float*>( calloc( _t_nodes * _x_nodes, sizeof( float)));
-        assert( _buffer);
-
-        setFull( std::numeric_limits< float>::signaling_NaN());
-    }
-
-    void init( float* buffer, int t_nodes, int x_nodes, float t_step, float x_step)
-    {
-        assert( _buffer == nullptr );
-
-        _t_nodes = t_nodes;
-        _x_nodes = x_nodes;
-        _t_step = t_step;
-        _x_step = x_step;
-
-        _buffer = buffer;
-        assert( _buffer);
-    }
-
     ~Grid()
     {
         free( _buffer);
     }
 
+    void init( int t_size, int x_size)
+    {
+        assert( _buffer == nullptr );
+
+        _t_size = t_size;
+        _x_size = x_size;
+
+        _buffer = static_cast< float*>( calloc( _t_size * _x_size, sizeof( float)));
+        assert( _buffer);
+
+        setFull( std::numeric_limits< float>::signaling_NaN());
+    }
+
+    void init( float* buffer, int t_size, int x_size)
+    {
+        assert( _buffer == nullptr );
+
+        _t_size = t_size;
+        _x_size = x_size;
+
+        _buffer = buffer;
+        assert( _buffer);
+    }
+
     bool operator==( Grid& other)
     {
-        if ( _t_nodes != other._t_nodes
-             || _x_nodes != other._x_nodes )
+        if ( _t_size != other._t_size
+             || _x_size != other._x_size )
         {
             return false;
         }
 
-        for ( int t = 0; t < _t_nodes; t++ )
+        for ( int t = 0; t < _t_size; t++ )
         {
-            for ( int x = 0; x < _x_nodes; x++ )
+            for ( int x = 0; x < _x_size; x++ )
             {
                 float val = getUnsafe( t, x);
                 float other_val = other.getUnsafe( t, x);
@@ -97,62 +93,37 @@ public:
         return true;
     }
 
+    void set( int t, int x, float val) { _buffer[t * _x_size + x] = val; }
+
+    void setFull( float val)
+    {
+        for ( int t = 0; t < _t_size; t++ )
+            for ( int x = 0; x < _x_size; x++ )
+                set( t, x, val);
+    }
+
     float get( int t, int x) const
     {
         float val = getUnsafe( t, x);
         if ( std::isnan( val) )
         {
             DEBUG_PRINT( "Access: (%d, %d) == nan", t, x);
-            fprintf( stderr, "Access: (%d, %d) == nan\n", t, x);
             assert( 0);
         }
         return val;
     }
 
-    void set( int t, int x, float val)
-    {
-        _buffer[t * _x_nodes + x] = val;
-    }
+    float*       getRow( int t)       { return &_buffer[t * _x_size]; }
+    const float* getRow( int t) const { return &_buffer[t * _x_size]; }
 
-    void setColumn( int x, float val)
-    {
-        for ( int t = 0; t < _t_nodes; t++ )
-            set( t, x, val);
-    }
-
-    void setRow( int t, float val)
-    {
-        for ( int x = 0; x < _x_nodes; x++ )
-            set( t, x, val);
-    }
-
-    float* getRow( int t)
-    {
-        return &_buffer[t * _x_nodes];
-    }
-
-    const float* getRow( int t) const
-    {
-        return &_buffer[t * _x_nodes];
-    }
-
-    void setFull( float val)
-    {
-        for ( int t = 0; t < _t_nodes; t++ )
-            setRow( t, val);
-    }
-
-    int getTNodesCount() const { return _t_nodes; }
-    int getXNodesCount() const { return _x_nodes; }
-
-    double getTStep() const { return _t_step; }
-    double getXStep() const { return _x_step; }
+    int getTSize() const { return _t_size; }
+    int getXSize() const { return _x_size; }
 
     void dump( FILE* outfile) const
     {
-        for ( int t = _t_nodes - 1; t >= 0; t-- )
+        for ( int t = _t_size - 1; t >= 0; t-- )
         {
-            for ( int x = 0; x < _x_nodes; x++ )
+            for ( int x = 0; x < _x_size; x++ )
             {
                 fprintf( outfile, "|%5.2f", getUnsafe(t, x));
             }
@@ -160,17 +131,25 @@ public:
         }
     }
 
-private:
-    float getUnsafe( int t, int x) const
+    float*       getUnderlyingBuffer()       { return _buffer; }
+    const float* getUnderlyingBuffer() const { return _buffer; }
+
+    float* detachUnderlyingBuffer()
     {
-        return _buffer[t * _x_nodes + x];
+        float* tmp = _buffer;
+        _buffer = nullptr;
+        return tmp;
     }
 
 private:
-    int   _t_nodes;
-    int   _x_nodes;
-    float _t_step;
-    float _x_step;
+    float getUnsafe( int t, int x) const
+    {
+        return _buffer[t * _x_size + x];
+    }
+
+private:
+    int   _t_size;
+    int   _x_size;
 
     float* _buffer;
 };
@@ -185,16 +164,14 @@ float identicalZero( float, float)
 /**
  * Sequential solver with 4-point explicit method.
  */
-void solveGrid4PE( Grid* grid, Function func)
+void solveGrid4PE( Grid* grid, Function func, float t_step, float x_step)
 {
-    float t_step = grid->getTStep();
-    float x_step = grid->getXStep();
     assert( t_step <= x_step && "Stability condition is not satisfied.");
 
-    for ( int t = 0; t < grid->getTNodesCount() - 1; t++ )
+    for ( int t = 0; t < grid->getTSize() - 1; t++ )
     {
         int x;
-        for ( x = 1; x < grid->getXNodesCount() - 1; x++ )
+        for ( x = 1; x < grid->getXSize() - 1; x++ )
         {
             float diff = t_step/x_step * (grid->get(t, x+1) - 2.f*grid->get(t, x) + grid->get(t, x-1))
                          - (grid->get(t, x+1) - grid->get(t, x-1));
@@ -223,6 +200,10 @@ int getNodeCount( int rank, int n_proc, int n_nodes)
     return count;
 }
 
+/**
+ * Distributes nodes among processors in this pattern:
+ * |x+1|x+1|x+1| x | x | x | x | x |
+ */
 int getBeginNode( int rank, int n_proc, int n_nodes)
 {
     int nodes_per_proc = n_nodes / n_proc;
@@ -257,8 +238,20 @@ void worker( int t_count, int x_count,          // Amount of nodes to be CALCULA
     /**
      * We allocate additional left and right node for all procs,
      * except the last one.
+     *
+     * E.g. for n_proc = 4:
+     *  proc0     proc2
+     * _-----_   _-----_
+     * _-----_   _-----_
+     * _-----_   _-----_
+     * _-----_   _-----_
+     *      _-----_   _-----
+     *      _-----_   _-----
+     *      _-----_   _-----
+     *      _-----_   _-----
+     *       proc1     proc3
      */
-    grid->init( t_count, x_count + 1 + !is_last_proc, t_step, x_step);
+    grid->init( t_count, x_count + 1 + !is_last_proc);
 
     /**
      * Applying boundary condition on x axis.
@@ -272,7 +265,7 @@ void worker( int t_count, int x_count,          // Amount of nodes to be CALCULA
      * NOTE: Left boundary condition is accessed at index = -1.
      * NOTE: For last proc right boundary condition is not accessed, therefore doesn't go out-of-bounds.
      */
-    for ( int x = 0; x < grid->getXNodesCount(); x++ )
+    for ( int x = 0; x < grid->getXSize(); x++ )
     {
         grid->set( 0, x, xaxis_boundary[x - 1]);
     }
@@ -293,16 +286,19 @@ void worker( int t_count, int x_count,          // Amount of nodes to be CALCULA
             grid->set( t, 0, taxis_boundary[t]);
     }
 
+    /**
+     * Deduce neighbours.
+     */
     int left_proc  = is_zero_proc ? MPI_UNDEFINED : proc_rank - 1;
     int right_proc = is_last_proc ? MPI_UNDEFINED : proc_rank + 1;
 
     /**
      * Apply 4-point explicit method.
      */
-    for ( int t = 0; t < grid->getTNodesCount() - 1; t++ )
+    for ( int t = 0; t < grid->getTSize() - 1; t++ )
     {
         int x;
-        for ( x = 1; x < grid->getXNodesCount() - 1; x++ )
+        for ( x = 1; x < grid->getXSize() - 1; x++ )
         {
             float diff = t_step/x_step * (grid->get(t, x+1) - 2.f*grid->get(t, x) + grid->get(t, x-1))
                          - (grid->get(t, x+1) - grid->get(t, x-1));
@@ -329,10 +325,10 @@ void worker( int t_count, int x_count,          // Amount of nodes to be CALCULA
             if ( !is_last_proc )
             {
                 float recv = 0.f;
-                float send = grid->get( t + 1, grid->getXNodesCount() - 2);
+                float send = grid->get( t + 1, grid->getXSize() - 2);
                 MPI_Send( &send, 1, MPI_FLOAT, right_proc, 0, MPI_COMM_WORLD);
                 MPI_Recv( &recv, 1, MPI_FLOAT, right_proc, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                grid->set( t + 1, grid->getXNodesCount() - 1, recv);
+                grid->set( t + 1, grid->getXSize() - 1, recv);
             }
 
             /**
@@ -367,17 +363,27 @@ void worker( int t_count, int x_count,          // Amount of nodes to be CALCULA
             if ( !is_last_proc )
             {
                 float recv = 0.f;
-                float send = grid->get( t + 1, grid->getXNodesCount() - 2);
+                float send = grid->get( t + 1, grid->getXSize() - 2);
                 MPI_Recv( &recv, 1, MPI_FLOAT, right_proc, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 MPI_Send( &send, 1, MPI_FLOAT, right_proc, 0, MPI_COMM_WORLD);
-                grid->set( t + 1, grid->getXNodesCount() - 1, recv);
+                grid->set( t + 1, grid->getXSize() - 1, recv);
             }
-//            DEBUG_PRINT( "Sol:");
-//            grid->dump( stderr);
         }
     }
 }
 
+/**
+ * Append src_buffer to dst_buffer row-wise.
+ *
+ *     /----- dst_buffer
+ *     |
+ * ____ssss
+ * ____ssss
+ * ____ssss
+ * ____ssss
+ *     <-->   src_width
+ * <------>   dst_width
+ */
 void appendBuffer( float* dst_buffer, float* src_buffer, int dst_width, int src_width, int height)
 {
     for ( int h = 0; h < height; h++ )
@@ -386,10 +392,10 @@ void appendBuffer( float* dst_buffer, float* src_buffer, int dst_width, int src_
 
 int main()
 {
-    const int t_nodes = 10;
-    const int x_nodes = 10;
-    const float t_step = 0.1f;
-    const float x_step = 0.1f;
+    const int t_total = 10000;
+    const int x_total = 10000;
+    const float t_step = 1e-4f;
+    const float x_step = 1e-4f;
 
     MPI_Init( NULL, NULL);
 
@@ -398,117 +404,119 @@ int main()
     int proc_rank;
     MPI_Comm_rank( MPI_COMM_WORLD, &proc_rank);
 
-    Grid grid;
+    Grid ref_grid;
     if ( proc_rank == 0 )
     {
-        grid.init( t_nodes, x_nodes, t_step, x_step);
+        double start = MPI_Wtime();
 
-        for ( int t = 0; t < t_nodes; t++ )
+        ref_grid.init( t_total, x_total);
+        for ( int t = 0; t < t_total; t++ )
         {
-            grid.set( t, 0, powf( 2.71, t_step * t));
+            ref_grid.set( t, 0, powf( 2.71, t_step * t));
         }
-        for ( int x = 0; x < x_nodes; x++ )
+        for ( int x = 0; x < x_total; x++ )
         {
-            grid.set( 0, x, powf( 2.71, -x_step * x));
+            ref_grid.set( 0, x, powf( 2.71, -x_step * x));
         }
-
-        printf( "Initial:\n");
-        grid.dump( stdout);
-
-        solveGrid4PE( &grid, &identicalZero);
-
-        printf( "Solution:\n");
-        grid.dump( stdout);
-    }
-
-    MPI_Barrier( MPI_COMM_WORLD);
-
-    float t_bound[t_nodes];
-    float x_bound[x_nodes];
-    for ( int t = 0; t < t_nodes; t++ )
-    {
-        t_bound[t] = powf( 2.71, t_step * t);
-    }
-    for ( int x = 0; x < x_nodes; x++ )
-    {
-        x_bound[x] = powf( 2.71, -x_step * x);
-    }
-
-    Grid grid1;
-
-    int x_begin = getBeginNode( proc_rank, n_proc, x_nodes - 1) + 1;
-    int x_count = getNodeCount( proc_rank, n_proc, x_nodes - 1);
-//     DEBUG_PRINT( "[%d; %d)", x_begin, x_begin + x_count);
-
-    worker( t_nodes, x_count, t_step, x_step,
-            t_bound, x_bound + x_begin,
-            &identicalZero, proc_rank, n_proc, &grid1);
 
 #if 0
-    if ( proc_rank == 0) grid1.dump( stderr);
-    MPI_Barrier( MPI_COMM_WORLD);
-
-    if ( proc_rank == 1) grid1.dump( stderr);
-    MPI_Barrier( MPI_COMM_WORLD);
-
-    if ( proc_rank == 2) grid1.dump( stderr);
-    MPI_Barrier( MPI_COMM_WORLD);
+        fprintf( stderr, "Initial:\n");
+        ref_grid.dump( stdout);
 #endif
 
-    /**
-     * Extract required subgrid on every proc.
-     *
-     * FIXME: SKIPS COLUMN x=0.
-     */
-    int extract_buf_sz = t_nodes * x_count;
-    float* extract_buf = static_cast< float*>( calloc( extract_buf_sz, sizeof( float)));
-    assert( extract_buf);
+        solveGrid4PE( &ref_grid, &identicalZero, t_step, x_step);
 
-    for ( int t = 0; t < t_nodes; t++ )
-        memcpy( extract_buf + t * x_count, grid1.getRow( t) + 1, x_count * sizeof( float));
+        double end = MPI_Wtime();
+        fprintf( stderr, "Time elapsed: %lf s\n", end - start);
+#if 0
+        fprintf( stderr, "Ref solution:\n");
+        ref_grid.dump( stdout);
+#endif
+    }
+
+    MPI_Barrier( MPI_COMM_WORLD);
+
+    double start = MPI_Wtime();
+    float taxis_boundary[t_total];
+    float xaxis_boundary[x_total];
+    for ( int t = 0; t < t_total; t++ )
+    {
+        taxis_boundary[t] = powf( 2.71, t_step * t);
+    }
+    for ( int x = 0; x < x_total; x++ )
+    {
+        xaxis_boundary[x] = powf( 2.71, -x_step * x);
+    }
+
+    Grid grid;
+
+    int x_begin = getBeginNode( proc_rank, n_proc, x_total - 1) + 1;
+    int x_part  = getNodeCount( proc_rank, n_proc, x_total - 1);
+//     DEBUG_PRINT( "[%d; %d)", x_begin, x_begin + x_count);
+
+    worker( t_total, x_part, t_step, x_step,
+            taxis_boundary, xaxis_boundary + x_begin,
+            &identicalZero, proc_rank, n_proc, &grid);
 
     if ( proc_rank == 0 )
     {
-        // Allocate merged.
-        int merged_buf_sz = t_nodes * x_nodes;
+        // Allocate buffer for result.
+        int merged_buf_sz = t_total * x_total;
         float* merged_buf = static_cast< float*>( calloc( merged_buf_sz, sizeof( float)));
         assert( merged_buf);
 
-        // t-axis boundary append to merged.
         int merged_buf_pos = 0;
-        appendBuffer( merged_buf + merged_buf_pos, t_bound, x_nodes, 1, t_nodes);
-        merged_buf_pos += 1;
 
-        // proc == 0 append to merged.
-        appendBuffer( merged_buf + merged_buf_pos, extract_buf, x_nodes, x_count, t_nodes);
-        merged_buf_pos += x_count;
+        // Append proc == 0 grid to merged.
+        appendBuffer( merged_buf + merged_buf_pos, grid.getUnderlyingBuffer(), x_total, grid.getXSize(), t_total);
+        // Move position to LEFT NODE of the next proc's grid.
+        merged_buf_pos += x_part;
 
-        // Receive from proc != 0 and append to merged.
+        // Reuse grid buffer.
+        float* tmp_buf = grid.detachUnderlyingBuffer();
+
+        // Receive results from proc != 0 and append to merged.
         for ( int i = 1; i < n_proc; i++ )
         {
-            int x_count_other = getNodeCount( i, n_proc, x_nodes - 1);
-            assert( x_count >= x_count_other);
+            bool is_last_proc = (i == n_proc-1);
 
-            int buf_sz_other = t_nodes * x_count_other;
-            MPI_Recv( extract_buf, buf_sz_other, MPI_FLOAT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            int x_part_other = getNodeCount( i, n_proc, x_total - 1);
 
-            appendBuffer( merged_buf + merged_buf_pos, extract_buf, x_nodes, x_count_other, t_nodes);
-            merged_buf_pos += x_count_other;
+            // Size of tmp_buf must be at least as other proc's buffer.
+            assert( x_part >= x_part_other );
+
+            // Evaluate size of proc's buffer, including left and right node.
+            int x_size_other = x_part_other + 1 + !is_last_proc;
+
+            MPI_Recv( tmp_buf, x_size_other * t_total, MPI_FLOAT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            appendBuffer( merged_buf + merged_buf_pos, tmp_buf, x_total, x_size_other, t_total);
+            // Move position to LEFT NODE of the next proc's grid.
+            merged_buf_pos += x_part_other;
         }
 
+        assert( merged_buf_pos == x_total - 1);
+
         Grid merged;
-        merged.init( merged_buf, t_nodes, x_nodes, t_step, x_step);
+        merged.init( merged_buf, t_total, x_total);
+
+        double end = MPI_Wtime();
+        DEBUG_PRINT( "Time elapsed: %lf s", end - start);
+
+#if 0
         DEBUG_PRINT( "Merged:");
         merged.dump( stderr);
-
-        assert( merged == grid);
+#endif
+        assert( merged == ref_grid);
     }
     else
     {
-        MPI_Send( extract_buf, extract_buf_sz, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
-    }
+        // Send whole grid to proc == 0.
+        MPI_Send( grid.getUnderlyingBuffer(), grid.getXSize() * grid.getTSize(), MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
 
-    free( extract_buf);
+        double end = MPI_Wtime();
+        DEBUG_PRINT( "Time elapsed: %lf s", end - start);
+    }
 
     MPI_Finalize();
 }
